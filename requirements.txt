@@ -1,0 +1,6 @@
+voyageai>=0.3.0
+pymongo>=4.7.0
+python-dotenv>=1.0.0
+pandas>=2.2.0
+streamlit>=1.38.0
+tqdm>=4.66.0
