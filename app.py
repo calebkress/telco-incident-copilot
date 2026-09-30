@@ -138,11 +138,21 @@ if search_button and incident_text.strip():
                 st.markdown("**Resolution:**")
                 st.success(item.get("resolution", "No resolution recorded."))
 
-    # Stretch Goal: Drafted Resolution
+    # Stretch Goal: Drafted Resolution Grounding
     st.divider()
     st.subheader("3. Drafted Resolution Grounding")
     st.caption("Grounding incoming resolution based on top reranked historical tickets:")
     
     top_match = reranked[0]
+    top_score = top_match["rerank_score"]
+
+    # Visual confidence badge based on cross-encoder rerank score
+    if top_score >= 0.65:
+        st.success(f"🎯 High Match Confidence ({top_score:.2f}) — Direct resolution match found.")
+    elif top_score >= 0.50:
+        st.warning(f"⚠️ Moderate Match Confidence ({top_score:.2f}) — Review resolution carefully before sending.")
+    else:
+        st.error(f"🚨 Low Match Confidence ({top_score:.2f}) — No exact historical ticket found. Recommend Tier-2 escalation.")
+
     st.markdown(f"**Top Recommended Fix (from ticket `{top_match['ticket_id']}`):**")
     st.info(top_match.get("resolution", "No historical resolution found."))
