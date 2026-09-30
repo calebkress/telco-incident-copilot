@@ -1,86 +1,60 @@
-# Telco Incident Copilot
+# Telco Incident Copilot 📡
 
-A "similar incident retrieval" tool for telco support: paste in a new incident and
-get back the most similar past tickets — plus, eventually, a drafted resolution
-grounded in them.
+A two-stage retrieval pipeline for technical support teams: paste an incoming incident, perform hybrid filtering, and retrieve the most relevant past ticket resolutions in real time using **Voyage AI** and **MongoDB Atlas Vector Search**.
 
-Built as a hands-on Voyage AI + MongoDB Atlas Vector Search project: the point
-isn't just wiring the API calls together, it's understanding the mechanics
-(`input_type` modes, why reranking sits on top of vector search instead of
-replacing it, embedding dimensionality, batching/rate limits) well enough to
-explain them in a Solutions Engineering conversation.
+Built to demonstrate how adding cross-encoder reranking (`rerank-2`) on top of vector similarity (`voyage-3`) drastically improves top-k retrieval quality without relying on expensive LLM generation passes.
 
-## Pipeline
+---
+
+## Architecture
 
 ```
-raw ticket CSV (Kaggle, multilingual customer support tickets)
-    │
-    ▼
-data/prepare_data.py           reframe as telco tickets, build text_blob
-    │
-    ▼
-src/ingest.py                  voyage-3 embed (input_type="document") → Atlas
-    │
-    ▼
-Atlas Vector Search index      (created manually in the Atlas UI — see below)
-    │
-    ▼
-src/query.py                   voyage-3 embed (input_type="query")
-                                → $vectorSearch (candidates)
-                                → rerank-2 (re-score)
-    │
-    ▼
-app.py (Streamlit)             paste an incident, compare vector-only vs
-                                reranked results, [stretch] drafted resolution
+Incoming Incident
+       │
+       ▼
+src/query.py (embed with voyage-3, input_type="query")
+       │
+       ▼
+MongoDB Atlas Vector Search ($vectorSearch ANN + pre-filtering)
+       │ (returns top 25 candidate docs)
+       ▼
+Voyage AI rerank-2 (cross-encoder re-scoring)
+       │ (boosts joint query-candidate relevance)
+       ▼
+app.py (Streamlit UI comparison & resolution grounding)
 ```
 
-## Data
+### Key Technical Decisions
+* **Asymmetric Embeddings:** Corpus documents are embedded with `input_type="document"`, while incoming queries use `input_type="query"`. This aligns with Voyage's bi-encoder training for asymmetric retrieval tasks.
+* **No Answer Contamination:** The `text_blob` used for indexing contains only the ticket subject and body. Historical `resolution` data is strictly reserved for display and grounding—preventing vector search from cheating on answer phrasing that an incoming query wouldn't have.
+* **Two-Stage Retrieval:** Vector search acts as a fast candidate generator (ANN over cosine similarity). `rerank-2` acts as a heavy joint-attention cross-encoder, re-scoring candidates based on specific hardware, symptom, and temporal nuances.
+* **Idempotent Ingestion:** Corpus docs use SHA-1 hashed `ticket_id` keys with MongoDB `upsert=True` bulk operations to prevent duplicate entries on re-runs.
 
-Source: Tobias Bueck's multilingual customer support tickets dataset (Kaggle).
-`data/prepare_data.py` turns it into a telco-flavored corpus:
+---
 
-- Drops the "Human Resources" queue (no telco-support analogue).
-- Relabels queues onto telco categories (Technical Support, Network Outage &
-  Maintenance, Billing & Payments, Device Returns & Exchanges, etc.) — the
-  ticket *content* isn't rewritten, since the underlying issues (platform
-  crashes, outages, billing disputes) already read like real enterprise
-  support tickets, and rewriting embedding corpus text for brand flavor
-  doesn't change what the model matches on.
-- Adds a heuristic `product_line` tag (Mobile / Broadband / TV & Streaming /
-  IoT & M2M / Enterprise Platform) via keyword matching — flavor for a
-  segmented-book-of-business demo, not a real classifier. Currently coarse
-  (most tickets land in "General Services" / "Enterprise Platform"); worth
-  tightening the keyword lists once you see it in the UI.
-- Samples down to ~1500 tickets (stratified by language) so embedding and
-  iterating on the pipeline stays fast. The full 20k rows work fine too —
-  pass `--sample-size 0`.
-- Builds `text_blob` = subject + body **only**. The ticket's `answer` is kept
-  separately as `resolution`, never folded into the embedded text — a real
-  incoming incident has no resolution yet, so embedding the answer into the
-  corpus would let vector search partly match on resolution phrasing the
-  query-time embedding could never have. See the docstring in
-  `prepare_data.py` for the full reasoning.
+## Quickstart
+
+### 1. Prerequisites & Environment Setup
+Clone the repo and set up your virtual environment:
 
 ```bash
-python data/prepare_data.py \
-    --input data/raw/dataset-tickets-multi-lang-4-20k.csv \
-    --output data/processed/tickets.csv \
-    --sample-size 1500
-```
-
-## Setup
-
-```bash
+git clone https://github.com/your-username/telco-incident-copilot.git
+cd telco-incident-copilot
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in VOYAGE_API_KEY and MONGODB_URI
 ```
 
-## Atlas Vector Search index
+Create a `.env` file in the project root (see `.env.example`):
 
-Created manually in the Atlas UI (Search & Vector Search → Create Search Index
-→ JSON Editor), against the `voyage-practice` cluster, `telco_copilot.tickets`
-collection:
+```ini
+VOYAGE_API_KEY=your_voyage_key
+MONGODB_URI=your_mongodb_atlas_uri
+MONGODB_DB=telco_copilot
+MONGODB_COLLECTION=tickets
+```
+
+### 2. Atlas Vector Search Index Configuration
+In your MongoDB Atlas UI, navigate to **Search & Vector Search** -> **Create Search Index** (JSON Editor) under the `telco_copilot.tickets` collection:
 
 ```json
 {
@@ -97,18 +71,37 @@ collection:
 }
 ```
 
-`numDimensions: 1024` matches voyage-3's default output dimension — if you
-switch models or truncate dimensions, this has to match exactly or
-`$vectorSearch` will reject the query. The two filter fields let `$vectorSearch`
-pre-filter by language or category before the ANN search runs, which matters
-once the corpus is big enough that "similar English billing tickets" and
-"similar German outage tickets" are meaningfully different searches.
+### 3. Pipeline Execution
 
-## Status
+```bash
+# 1. Prepare data (sample dataset to ~1,500 stratified telco tickets)
+python data/prepare_data.py
 
-- [x] Data prep (`data/prepare_data.py`)
-- [ ] Embedding + ingestion (`src/ingest.py`)
-- [ ] Atlas Vector Search index (manual, see above)
-- [ ] Query pipeline: vector search + rerank (`src/query.py`)
-- [ ] Streamlit frontend (`app.py`)
-- [ ] Stretch: LLM-drafted resolution
+# 2. Batch-embed corpus with voyage-3 and upsert to MongoDB
+python src/ingest.py
+
+# 3. Test CLI query execution & compare Vector-Only vs Reranked results
+python src/query.py "Router keeps dropping connection during peak hours"
+
+# 4. Launch Streamlit UI
+streamlit run app.py
+```
+
+---
+
+## Project Structure
+
+```
+telco-incident-copilot/
+├── app.py                # Streamlit UI (Side-by-side comparison & resolution grounding)
+├── data/
+│   ├── prepare_data.py   # Corpus reframing, language sampling & SHA-1 hashing
+│   └── processed/        # Stratified dataset output
+├── src/
+│   ├── ingest.py         # Batch voyage-3 embedding & MongoDB bulk upserts
+│   ├── query.py          # $vectorSearch + rerank-2 execution logic
+│   └── eval.py           # Multi-category / cross-lingual pipeline evaluation
+├── .env.example
+├── .gitignore
+└── requirements.txt
+```
