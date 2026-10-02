@@ -38,7 +38,7 @@ app.py (Streamlit UI comparison & resolution grounding)
 Clone the repo and set up your virtual environment:
 
 ```bash
-git clone https://github.com/your-username/telco-incident-copilot.git
+git clone https://github.com/calebkress/telco-incident-copilot.git
 cd telco-incident-copilot
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
