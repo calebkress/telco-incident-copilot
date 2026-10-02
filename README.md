@@ -2,7 +2,7 @@
 
 A two-stage retrieval pipeline for technical support teams: paste an incoming incident, perform hybrid filtering, and retrieve the most relevant past ticket resolutions in real time using **Voyage AI** and **MongoDB Atlas Vector Search**.
 
-Built to demonstrate how adding cross-encoder reranking (`rerank-2`) on top of vector similarity (`voyage-3`) drastically improves top-k retrieval quality without relying on expensive LLM generation passes.
+Built to demonstrate how adding cross-encoder reranking (`rerank-2`) on top of vector similarity (`voyage-3`) is designed to improve top-k retrieval quality without relying on expensive LLM generation passes.
 
 ---
 
